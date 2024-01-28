@@ -1,0 +1,42 @@
+﻿@using Trifoia.Module.Story.Services;
+@using Trifoia.Module.Story.Models;
+@using MudBlazor;
+
+@inherits StoryModuleBase
+
+<div class="container">
+
+        <Label Class="col-sm-3" For="value">Ink</Label>
+        <MudTextField InputType="InputType.Text" Variant="Variant.Outlined" @bind-Value="@_ink" Lines="6" @onfocusout="@CompileStory" />
+        <Label Class="col-sm-3" For="value" HelpText="Json generated from Ink">Ink JSON</Label>
+        <MudTextField InputType="InputType.Text" Variant="Variant.Outlined" @bind-Value="@_inkJSON" Lines="6" />
+
+        <MudCheckBox @bind-Checked="_hasTextBubble" Label="Prompt background has text bubble" />
+        <MudCheckBox @bind-Checked="_centerJustify" Label="Center justify paragraphs and titles" />
+        <MudCheckBox @bind-Checked="_promptFillSpace" Label="Prompt area expands to fill the space" />
+        <MudCheckBox @bind-Checked="_choicesFillSpace" Label="Choices button area expands to fill the space" />
+
+        <div class="d-flex">
+            <Label For="value" HelpText="Base path for images referenced in #Image tags, e.g. /Themes/images/lottieplaceholder/"></Label>
+            <MudTextField InputType="InputType.Text" @bind-Value="@_imageRoot" Label="Image Base Path" />
+        </div>
+
+        <div class="d-flex">
+            <Label For="value" HelpText="Base path for lottie files referenced in #Lottie tags, e.g. /Themes/lottie/"></Label>
+            <MudTextField InputType="InputType.Text" @bind-Value="@_lottieRoot" Label="Lottie Base Path" />
+        </div>
+
+        <MudCheckBox @bind-Checked="_returnOnComplete" Label="Navigate to ReturnUrl on Ink Complete" />
+
+</div>
+
+@code {
+    public override string Title => "Story Settings";
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+    }
+
+}

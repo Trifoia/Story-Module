@@ -1,0 +1,333 @@
+@using System.Text.Json;
+@using System.ComponentModel;
+@using Trifoia.Module.Story.Services;
+@using Trifoia.Module.Story.Models;
+@using Markdig;
+
+@inherits StoryModuleBase
+
+
+@if (PageState.EditMode)
+{
+    <MudPaper Style="position:relative;">
+        <MudOverlay Visible="@_busy" DarkBackground="true" Absolute="true">
+            <MudProgressCircular Size="Size.Large" Indeterminate="true" />
+        </MudOverlay>
+        <MudTextField @bind-Value="@_ink" Label="Ink" Lines="6" Variant="Variant.Outlined" @onfocusout="CompileStory" />
+        <MudTextField @bind-Value="@_inkJSON" Label="Ink JSON" Lines="6" Variant="Variant.Outlined" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MudBlazor.Icons.Material.Filled.Settings" Href="@EditUrl("Settings")">Settings</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@MudBlazor.Icons.Material.Filled.Clear" OnClick="ClearJson">Clear</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@MudBlazor.Icons.Material.Filled.Save" OnClick="UpdateSettings">Save</MudButton>
+        @if (!string.IsNullOrEmpty(_inkJSON) && _story == null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Filled">@($"Ink error [{_errorMessage}]")</MudAlert>
+        }
+    </MudPaper>
+}
+else if (loading)
+{
+    <div class="mbb-ink-container">
+        <div class="mbb-prompt-card">
+            <MudSkeleton SkeletonType="SkeletonType.Rectangle" Animation="Animation.Wave" />
+        </div>
+
+        <div class="mbb-ink-controls-container">
+            <MudSkeleton SkeletonType="SkeletonType.Text" Animation="Animation.Wave" />
+            <MudSkeleton SkeletonType="SkeletonType.Text" Animation="Animation.Wave" />
+            <MudSkeleton SkeletonType="SkeletonType.Text" Animation="Animation.Wave" />
+        </div>
+    </div>
+
+}
+else
+{
+    <div vlass="mbb-ink-container">
+        <div class="mbb-prompt-card" data-text-bubble="@_hasTextBubble.ToString()" data-fill-space="@_promptFillSpace.ToString()">
+            <span class="@InkPromptClass">@_currentLine</span>
+        </div>
+
+        @if (_currentChoices.Any())
+        {
+            if (_choicesFillSpace)
+            {
+                  <div class="mbb-ink-controls-container" data-fill-space="@_choicesFillSpace.ToString()">
+                   @foreach (var choice in _currentChoices)
+                    {
+                        if(choice.Tags?.FirstOrDefault(t => t.StartsWith("Image=")) != null)
+                        {
+                            // Handle choices defined like this: "+ [#Image=someimage.png]"
+                            // create image button instead of text button
+                            var image = choice.Tags.First(t => t.StartsWith("Image=")).Replace("Image=", "");
+                            <MudButton OnClick="@(() => ChoiceSelected(choice))" Class="mbb-choice-card mbb-image-button" Variant="Variant.Text">
+                                <img src="@($"{_imageRoot}{image}")" />
+                            </MudButton>
+                        }
+                        else  // non image buttons
+                        {
+                            var color = _visitedChoices.Contains(choice.PathStringOnChoice) ? Color.Tertiary : Color.Secondary;
+                            @*<MudButton OnClick="@(() => ChoiceSelected(choice))" Color="Color.Secondary">@choice.Text</MudButton>*@
+                            <MudFab OnClick="@(() => ChoiceSelected(choice))" Color="@color" Label="@choice.Text"></MudFab>
+                        }
+                    }
+               </div>
+            }
+            else
+            {
+                <div class="mbb-ink-controls-container" data-fill-space="@_choicesFillSpace.ToString()">
+                    @foreach (var choice in _currentChoices)
+                    {
+                        if (choice.Tags?.FirstOrDefault(t => t.StartsWith("Image=")) != null)
+                        {
+                            // Handle choices defined like this: "+ [#Image=someimage.png]"
+                            // create image button instead of text button
+                            var image = choice.Tags.First(t => t.StartsWith("Image=")).Replace("Image=", "");
+                            <MudButton OnClick="@(() => ChoiceSelected(choice))" Class="mbb-choice-card mbb-image-button" Variant="Variant.Text">
+                                <img src="@($"{_imageRoot}{image}")" />
+                            </MudButton>
+                        }
+                        else
+                        {
+                            var color = _visitedChoices.Contains(choice.PathStringOnChoice) ? Color.Tertiary : Color.Secondary;
+                            @*<MudButton OnClick="@(() => ChoiceSelected(choice))" Color="Color.Secondary">@choice.Text</MudButton>*@
+                            <MudFab OnClick="@(() => ChoiceSelected(choice))" Color="@color" Label="@choice.Text"></MudFab>
+                        }
+                    }
+                </div>
+            }
+        } else if (_hasPrevious || _hasNext || _hasFinish)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Stretch" Justify="Justify.SpaceAround" Class="p-3">
+                @if (_hasPrevious)
+                {
+                    <MudFab OnClick="Previous" Class="mbb-choice-card" Color="Color.Secondary" Label="Previous" />
+                }
+                @if (_hasNext)
+                {
+                    <MudFab OnClick="@(() => Next())" Class="mbb-choice-card" Color="Color.Primary" Label="Keep Reading" />
+                }
+                @if (_hasFinish)
+                {
+                    <MudFab OnClick="Finish" Class="mbb-choice-card" Color="Color.Primary" Label="Finish" />
+                }
+            </MudStack>
+        }
+    </div>
+    <div class="mbb-close-button" onclick="@Close" />
+}
+
+@code 
+{
+    bool loading;
+    string pageId;
+
+    MarkupString _currentLine = new MarkupString();
+    List<InkChoice> _currentChoices = new();
+    HashSet<string> _visitedChoices = new();
+
+    bool _hasNext = false;
+    bool _hasPrevious = false;
+    bool _hasFinish = false;
+
+    string InkPromptClass => _centerJustify ? "mbb-prompt-text centered" : "mbb-prompt-text";
+
+    public override List<Resource> Resources => new List<Resource>
+    ()
+    {
+        new Resource { ResourceType = ResourceType.Stylesheet, Url = "Themes/css/Components/Ink.css" },
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        loading = true;
+        await base.OnInitializedAsync();
+
+        @if (PageState.EditMode)
+        {
+            return;
+        }
+
+        if (_story == null)
+        {
+            // TODO: handle case when no story is defined
+            return;
+        }
+
+        pageId = PageState.Page.PageId.ToString();
+
+    
+        loading = false;
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if(firstRender)
+            SiteState.Properties.HideNav = true;
+
+        return base.OnAfterRenderAsync(firstRender);
+    }
+
+    private void ChoiceSelected(InkChoice choice)
+    {
+        // if there is a choice called Link then navigate to the specified URL
+        if (choice.Tags!=null && choice.Tags.Any(t => t.Contains("URL=")))
+        {
+            var url = choice.Tags.First(t => t.StartsWith("URL=")).Replace("URL=", "");
+            NavigationManager.NavigateTo(url);
+            return;
+        }
+
+        if(choice.Index >= _story.currentChoices.Count)
+        {
+            return;
+        }
+        _visitedChoices.Add(choice.PathStringOnChoice);
+        var choiceIndex = choice.Index;
+        _story.ChooseChoiceIndex(choiceIndex);
+        Next();
+    }
+
+    private void Next(bool fromRestoredState = false)
+    {
+        if (_story != null)
+        {
+            if (_story.canContinue)
+            {
+                _currentLine = ProcessStoryText(_story.Continue());
+            }
+            // if we're continuing from a restored state we don't need to add the state again
+            if (!fromRestoredState)
+            {
+               // AppState.UserData.InkStateByPage[pageId].Add(_story.state.ToJson());
+            }
+
+            ProcessTags();
+        }
+    }
+
+
+    private void Previous()
+    {
+ @*        if (_story != null && AppState.UserData.InkStateByPage[pageId].Any())
+        {
+            // remove the current state and load the last one
+            AppState.UserData.InkStateByPage[pageId].RemoveAt(AppState.UserData.InkStateByPage[pageId].Count - 1);
+            var state = AppState.UserData.InkStateByPage[pageId].Last();
+            _story.state.LoadJson(state);
+            _currentLine = ProcessStoryText(_story.currentText);
+
+            ProcessTags();
+        }
+ *@
+    }
+
+    MarkupString ProcessStoryText(string text)
+    {
+        // because the Ink authoring tool may not support "\n" line breaks, process "<br>" to linebreaks to allow Markdown to parse them
+        text = text.Replace("<br>", "\n");
+
+        var output = Markdig.Markdown.ToHtml(text);
+
+        return new MarkupString(output);
+    }
+
+    private void ProcessTags()
+    {
+        if (_story.currentTags.Any())
+        {
+            foreach (var tag in _story.currentTags)
+            {
+                if (tag.StartsWith(InkTag.Lottie))
+                {
+                    var lottieFilename = tag.Replace(InkTag.Lottie, "");
+                    SiteState.Properties.Lottie = $"{_lottieRoot}{lottieFilename}"; 
+                }
+                else if (tag.StartsWith(InkTag.Image))
+                {
+                    var imageFilename = tag.Replace(InkTag.Image, "");
+                    SiteState.Properties.Image = $"{_imageRoot}{imageFilename}";
+                }
+                else if (tag.Equals(InkTag.End))
+                {
+                    Finish();
+                    return;
+                }
+            }
+        }
+
+        _currentChoices = _story.currentChoices
+                                        .Select(choice => new InkChoice
+                                            {
+                                                Text = choice.text,
+                                                Tags = choice.tags,
+                                                Index = choice.index,
+                                                PathStringOnChoice = choice.pathStringOnChoice
+                                            })
+                                        .ToList();
+
+        _hasNext = _story.canContinue;
+        _hasPrevious = false;
+        _hasFinish = !_hasNext && _currentChoices.Count == 0;
+
+        if (string.IsNullOrEmpty(_currentLine.Value) && !_hasNext && _currentChoices.Count == 0)
+        {
+            // if there's no more text and no more choices, we're at the end of the story
+            Finish();
+            return;
+        }
+
+        StateHasChanged();
+    }
+
+    private void Finish()
+    {
+        
+        // notify Achievement module if present
+        SiteState.Properties.InkEnded = pageId;
+
+        if(_returnOnComplete)
+        {
+            if (!string.IsNullOrEmpty(PageState.ReturnUrl))
+            {
+                NavigationManager.NavigateTo(PageState.ReturnUrl);
+                return;
+            } else
+            {
+               // AppState.NavigatePop();
+                return;
+            }
+        }
+
+        SiteState.Properties.HideNav = false;
+
+        _currentChoices.Clear();
+        _hasNext = false;
+        _hasPrevious = false;
+        _hasFinish = false;
+
+        StateHasChanged();
+    }
+
+    void Close()
+    {
+        if (!string.IsNullOrEmpty(PageState.ReturnUrl))
+        {
+            NavigationManager.NavigateTo(PageState.ReturnUrl);
+        }
+        else
+        {
+            // try stack navigation when returnURL is not specified.
+            //AppState.NavigatePop();
+        }
+    }
+
+
+    #region EditMode
+
+    void ClearJson()
+    {
+        _inkJSON = "";
+        StateHasChanged();
+    }
+
+    #endregion
+}
