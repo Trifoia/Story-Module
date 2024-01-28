@@ -1,0 +1,11 @@
+[submodule "oqtane.framework"]
+	path = oqtane.framework
+	url = https://github.com/trifoia/oqtane.framework
+	branch = release/v5.0.1
+	ignore = all
+
+[submodule "ink"]
+	path = ink
+	url = https://github.com/trifoia/ink
+	branch = release/v1.1.1
+	ignore = all
